@@ -1,0 +1,26 @@
+{
+  "name": "food-delivery-app",
+  "version": "1.0.0",
+  "description": "Full-stack food delivery platform",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "nodemon backend/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.36.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "pg": "^8.10.0",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.31.1",
+    "socket.io": "^4.6.1",
+    "stripe": "^12.5.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
