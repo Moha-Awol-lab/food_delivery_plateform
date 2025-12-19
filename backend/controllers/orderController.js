@@ -1,39 +1,7 @@
 const { Order, MenuItem, Restaurant } = require('../models');
-
-exports.createOrder = async (req, res) => {
-  try {
-    const { restaurantId, items, address, lat, long } = req.body;
-
-    // 1. Calculate Total Price from DB (never trust price from frontend)
-    let total = 0;
-    for (const item of items) {
-      const dbItem = await MenuItem.findByPk(item.id);
-      total += dbItem.price * item.quantity;
-    }
-
-    // 2. Create the Order entry
-    const newOrder = await Order.create({
-      customerId: req.user.id, // From Auth middleware
-      restaurantId,
-      totalPrice: total,
-      deliveryAddress: address,
-      customerLat: lat,
-      customerLong: long,
-      status: 'pending'
-    });
-
-    // 3. TODO: Trigger WebSocket to notify Restaurant
-    res.status(201).json({ success: true, order: newOrder });
-  } catch (error) {
-    res.status(500).json({ message: "Order placement failed", error });
-  }
-};
-const Order = require('../models/Order');
-const MenuItem = require('../models/MenuItem');
 const { ORDER_STATUS } = require('../../common/constants');
 
-// @desc    Place a new order
-// @route   POST /api/orders
+// @desc    Place a new order (Combined Logic)
 exports.placeOrder = async (req, res) => {
     try {
         const { restaurantId, items, deliveryAddress, lat, lng } = req.body;
@@ -42,6 +10,7 @@ exports.placeOrder = async (req, res) => {
         let calculatedTotal = 0;
         for (const item of items) {
             const dbItem = await MenuItem.findByPk(item.id);
+            if (!dbItem) continue;
             calculatedTotal += parseFloat(dbItem.price) * item.quantity;
         }
 
@@ -49,7 +18,7 @@ exports.placeOrder = async (req, res) => {
         const order = await Order.create({
             customerId: req.user.id,
             restaurantId,
-            items, // Snapshot of items at time of purchase
+            items, 
             totalAmount: calculatedTotal,
             deliveryAddress,
             deliveryLat: lat,
@@ -58,11 +27,12 @@ exports.placeOrder = async (req, res) => {
         });
 
         // 3. Notify the Restaurant via WebSockets
-        // We use req.io which we will attach in server.js
-        req.io.to(restaurantId).emit('new_order', {
-            message: "New order received!",
-            orderId: order.id
-        });
+        if (req.io) {
+            req.io.to(restaurantId).emit('new_order', {
+                message: "New order received!",
+                orderId: order.id
+            });
+        }
 
         res.status(201).json(order);
     } catch (error) {
@@ -71,11 +41,13 @@ exports.placeOrder = async (req, res) => {
 };
 
 // @desc    Update Order Status (used by Restaurant and Driver)
-// @route   PATCH /api/orders/:id/status
 exports.updateOrderStatus = async (req, res) => {
     try {
         const { status } = req.body;
-        const order = await Order.findByPk(req.params.id);
+        // Include Restaurant model so we can get its name/address for drivers
+        const order = await Order.findByPk(req.params.id, {
+            include: [{ model: Restaurant, as: 'restaurant' }]
+        });
 
         if (!order) return res.status(404).json({ message: 'Order not found' });
 
@@ -86,22 +58,24 @@ exports.updateOrderStatus = async (req, res) => {
             order.driverId = req.user.id;
         }
         
-        if (status === 'READY_FOR_PICKUP') {
-    // Notify all drivers in the 'drivers' socket room
-         req.io.to('available_drivers').emit('delivery_opportunity', {
-         orderId: order.id,
-         restaurantName: restaurant.name,
-         address: restaurant.address
-    });
-}
+        // Notify drivers if food is ready
+        if (status === 'READY_FOR_PICKUP' && req.io) {
+             req.io.to('available_drivers').emit('delivery_opportunity', {
+                 orderId: order.id,
+                 restaurantName: order.restaurant?.name || "Restaurant",
+                 address: order.restaurant?.address || "Address not available"
+            });
+        }
 
         await order.save();
 
         // Notify the Customer about the status change
-        req.io.to(order.customerId).emit('order_update', {
-            orderId: order.id,
-            status: status
-        });
+        if (req.io) {
+            req.io.to(order.customerId).emit('order_update', {
+                orderId: order.id,
+                status: status
+            });
+        }
 
         res.json({ message: `Order status updated to ${status}`, order });
     } catch (error) {
